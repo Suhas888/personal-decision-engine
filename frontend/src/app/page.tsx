@@ -128,8 +128,9 @@ export default function Dashboard() {
     try {
       const payload = {
         tasks: llmResponse.tasks || [],
-        events: llmResponse.events || [],
-        preferences: llmResponse.preferences || []
+        fixed_events: llmResponse.fixed_events || llmResponse.events || [],
+        preferences: llmResponse.preferences || {},
+        clarification_needed: false
       };
       
       const res = await authenticatedFetch(`${API_BASE_URL}/api/llm/save`, {
