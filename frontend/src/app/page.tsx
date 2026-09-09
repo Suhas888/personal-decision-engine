@@ -161,8 +161,7 @@ export default function Dashboard() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          current_plan: plan,
-          user_prompt: replanInput
+          text: replanInput
         })
       });
       if (!res.ok) {
