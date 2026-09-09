@@ -6,7 +6,7 @@ from .api.routes import health, profile, tasks, events, plan, llm, preferences, 
 # Use Alembic for migrations instead of create_all
 # Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Personal Decision Engine API")
+app = FastAPI(title="Personal Decision Engine API", debug=True)
 
 from .config import settings
 
