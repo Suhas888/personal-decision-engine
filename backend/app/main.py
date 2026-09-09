@@ -19,6 +19,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+import logging
+from fastapi import Request
+from fastapi.responses import JSONResponse
+
+logger = logging.getLogger("uvicorn.error")
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Global exception: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Internal Server Error: {str(exc)}"},
+    )
+
 app.include_router(health.router, tags=["Health"])
 app.include_router(profile.router, prefix="/api/profile", tags=["Profile"])
 app.include_router(tasks.router, prefix="/api/tasks", tags=["Tasks"])
@@ -30,3 +44,4 @@ app.include_router(replan.router, prefix="/api/replan", tags=["Replan"])
 app.include_router(commands.router, prefix="/api/commands", tags=["Commands"])
 app.include_router(constraints.router, prefix="/api/constraints", tags=["Constraints"])
 app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
+
