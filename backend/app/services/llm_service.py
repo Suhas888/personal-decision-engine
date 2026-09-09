@@ -54,9 +54,9 @@ class ParsedChangeRequest(BaseModel):
 def _call_gemini_with_retry(prompt: str, schema_class):
     client = genai.Client(api_key=settings.GEMINI_API_KEY)
     
-    max_retries = 5
-    base_delay = 5
-    max_wait_limit = 60
+    max_retries = 2        # fail fast — don't hang the user for minutes
+    base_delay = 2         # short initial delay
+    max_wait_limit = 10    # give up immediately if API demands >10s wait
     
     for attempt in range(max_retries):
         try:

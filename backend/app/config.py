@@ -7,7 +7,7 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     GEMINI_API_KEY: str = "test_key"
-    GEMINI_MODEL: str = "gemini-3.6-flash"
+    GEMINI_MODEL: str = "gemini-2.0-flash"
     DATABASE_URL: str = "sqlite:///./pde.db"
     SECRET_KEY: str = "default-insecure-key-for-local-dev-only"
     ENVIRONMENT: str = "development"
