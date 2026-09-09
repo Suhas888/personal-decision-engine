@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: pde-backend
+    env: python
+    buildCommand: "cd backend && pip install -r requirements.txt"
+    preDeployCommand: "cd backend && alembic upgrade 935deb1afd0f"
+    startCommand: "cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.14.4
+      - key: ENVIRONMENT
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: SECRET_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: FRONTEND_CORS_ORIGINS
+        sync: false
+    healthCheckPath: /health
