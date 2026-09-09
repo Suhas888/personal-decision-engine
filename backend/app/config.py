@@ -11,7 +11,10 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite:///./pde.db"
     SECRET_KEY: str = "default-insecure-key-for-local-dev-only"
     ENVIRONMENT: str = "development"
-    FRONTEND_CORS_ORIGINS: Union[list[str], str] = ["http://localhost:3000"]
+    FRONTEND_CORS_ORIGINS: Union[list[str], str] = [
+        "http://localhost:3000",
+        "https://personal-decision-engine.vercel.app",
+    ]
 
     class Config:
         env_file = ".env"
