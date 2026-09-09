@@ -15,6 +15,8 @@ class Settings(BaseSettings):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        if self.DATABASE_URL.startswith("postgres://"):
+            self.DATABASE_URL = self.DATABASE_URL.replace("postgres://", "postgresql://", 1)
         if self.ENVIRONMENT == "production":
             if self.DATABASE_URL.startswith("sqlite"):
                 raise ValueError("DATABASE_URL must be a PostgreSQL connection string in production!")
