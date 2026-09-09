@@ -2,6 +2,16 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple
 import jwt
+import bcrypt
+
+# Patch passlib + bcrypt compatibility bug (passlib 1.7.4 passes >72 byte strings to bcrypt in detect_wrap_bug)
+_orig_hashpw = bcrypt.hashpw
+def _safe_hashpw(password, salt):
+    if isinstance(password, bytes) and len(password) > 72:
+        password = password[:72]
+    return _orig_hashpw(password, salt)
+bcrypt.hashpw = _safe_hashpw
+
 from passlib.context import CryptContext
 
 from app.config import settings
