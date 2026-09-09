@@ -21,9 +21,13 @@ app.add_middleware(
 
 import logging
 from fastapi import Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 logger = logging.getLogger("uvicorn.error")
+
+@app.get("/", include_in_schema=False)
+async def root():
+    return RedirectResponse(url="/docs")
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
