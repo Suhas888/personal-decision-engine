@@ -54,43 +54,49 @@ def get_affected_count(db: Session, user_id: str, command: Command) -> int:
 
 @router.post("/preview")
 def preview_command(request: PreviewRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    try:
-        commands = parse_commands_from_text(request.message)
-    except HTTPException:
-        raise  # propagate 429, 503, etc. unchanged
-    except Exception as e:
-        raise HTTPException(status_code=422, detail=str(e))
+    from ...utils.timer import ServerTimer
+    timer = ServerTimer("command_preview")
+    
+    with timer.stage("llm_parse"):
+        try:
+            commands = parse_commands_from_text(request.message)
+        except HTTPException:
+            raise  # propagate 429, 503, etc. unchanged
+        except Exception as e:
+            raise HTTPException(status_code=422, detail=str(e))
+            
+    with timer.stage("validate_and_db"):
+        validator = CommandValidator()
+        validated_commands = []
         
-    validator = CommandValidator()
-    validated_commands = []
-    
-    requires_confirmation = False
-    total_affected = 0
-    
-    for cmd in commands:
-        result = validator.validate([cmd])
-        if not result.is_valid:
-            raise HTTPException(status_code=422, detail=f"Validation failed: {result.errors}")
-            
-        if result.requires_confirmation:
-            requires_confirmation = True
-            
-        validated_commands.append(cmd.model_dump())
-        if cmd.operation in (Operation.DELETE, Operation.UPDATE):
-            total_affected += get_affected_count(db, current_user.id, cmd)
+        requires_confirmation = False
+        total_affected = 0
+        
+        for cmd in commands:
+            result = validator.validate([cmd])
+            if not result.is_valid:
+                raise HTTPException(status_code=422, detail=f"Validation failed: {result.errors}")
+                
+            if result.requires_confirmation:
+                requires_confirmation = True
+                
+            validated_commands.append(cmd.model_dump(exclude_unset=True))
+            if cmd.operation in (Operation.DELETE, Operation.UPDATE):
+                total_affected += get_affected_count(db, current_user.id, cmd)
 
-    confirmation_id = None
-    if requires_confirmation:
-        confirmation_id = str(uuid.uuid4())
-        conf = CommandConfirmation(
-            id=confirmation_id,
-            user_id=current_user.id,
-            command_payload=validated_commands,
-            expires_at=datetime.now(timezone.utc) + timedelta(minutes=5)
-        )
-        db.add(conf)
-        db.commit()
+        confirmation_id = None
+        if requires_confirmation:
+            confirmation_id = str(uuid.uuid4())
+            conf = CommandConfirmation(
+                id=confirmation_id,
+                user_id=current_user.id,
+                command_payload=validated_commands,
+                expires_at=datetime.now(timezone.utc) + timedelta(minutes=5)
+            )
+            db.add(conf)
+            db.commit()
 
+    timer.log_total()
     return {
         "commands": validated_commands,
         "summary": f"Interpreted {len(validated_commands)} command(s).",
@@ -102,48 +108,54 @@ def preview_command(request: PreviewRequest, db: Session = Depends(get_db), curr
 
 @router.post("/execute")
 def execute_command(request: ExecuteRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    commands_to_execute = []
+    from ...utils.timer import ServerTimer
+    timer = ServerTimer("command_execute")
     
-    if request.confirmation_id:
-        # Atomic lock/select for update
-        conf = db.query(CommandConfirmation).filter(
-            CommandConfirmation.id == request.confirmation_id,
-            CommandConfirmation.user_id == current_user.id
-        ).with_for_update().first()
+    with timer.stage("db_fetch_and_validate"):
+        commands_to_execute = []
         
-        if not conf:
-            raise HTTPException(status_code=404, detail="Confirmation not found.")
+        if request.confirmation_id:
+            # Atomic lock/select for update
+            conf = db.query(CommandConfirmation).filter(
+                CommandConfirmation.id == request.confirmation_id,
+                CommandConfirmation.user_id == current_user.id
+            ).with_for_update().first()
             
-        if conf.consumed:
-            raise HTTPException(status_code=409, detail="Confirmation already consumed.")
+            if not conf:
+                raise HTTPException(status_code=404, detail="Confirmation not found.")
+                
+            if conf.consumed:
+                raise HTTPException(status_code=409, detail="Confirmation already consumed.")
+                
+            if datetime.now(timezone.utc) > conf.expires_at.replace(tzinfo=timezone.utc):
+                raise HTTPException(status_code=409, detail="Confirmation expired.")
+                
+            conf.consumed = True
+            db.commit()
             
-        if datetime.now(timezone.utc) > conf.expires_at.replace(tzinfo=timezone.utc):
-            raise HTTPException(status_code=409, detail="Confirmation expired.")
+            raw_commands = conf.command_payload
+            commands_to_execute = [Command(**c) for c in raw_commands]
+        elif request.commands:
+            commands_to_execute = request.commands
+            # Validate they don't require confirmation
+            validator = CommandValidator()
+            res = validator.validate(commands_to_execute)
+            if not res.is_valid:
+                raise HTTPException(status_code=422, detail=f"Validation failed: {res.errors}")
+            if res.requires_confirmation:
+                raise HTTPException(status_code=403, detail="Command requires explicit confirmation.")
+        else:
+            raise HTTPException(status_code=400, detail="Must provide confirmation_id or commands.")
             
-        conf.consumed = True
-        db.commit()
+    with timer.stage("executor"):
+        executor = CommandExecutor(db, current_user.id)
+        results = []
         
-        raw_commands = conf.command_payload
-        commands_to_execute = [Command(**c) for c in raw_commands]
-    elif request.commands:
-        commands_to_execute = request.commands
-        # Validate they don't require confirmation
-        validator = CommandValidator()
-        res = validator.validate(commands_to_execute)
-        if not res.is_valid:
-            raise HTTPException(status_code=422, detail=f"Validation failed: {res.errors}")
-        if res.requires_confirmation:
-            raise HTTPException(status_code=403, detail="Command requires explicit confirmation.")
-    else:
-        raise HTTPException(status_code=400, detail="Must provide confirmation_id or commands.")
-        
-    executor = CommandExecutor(db, current_user.id)
-    results = []
-    
-    try:
-        results = executor.execute(commands_to_execute)
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-        
+        try:
+            results = executor.execute(commands_to_execute)
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(status_code=500, detail=str(e))
+            
+    timer.log_total()
     return {"results": [r.__dict__ for r in results]}

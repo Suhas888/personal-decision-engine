@@ -139,3 +139,18 @@ def delete_task(task_id: int, db: Session = Depends(get_db), current_user: User 
     db.delete(db_task)
     db.commit()
     return {"ok": True}
+
+from pydantic import BaseModel
+class TaskCompleteUpdate(BaseModel):
+    completed: bool
+
+@router.patch("/{task_id}/complete")
+def toggle_task_completion(task_id: int, update: TaskCompleteUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    db_task = db.query(Task).filter(Task.id == task_id, Task.user_id == current_user.id).first()
+    if not db_task:
+        raise HTTPException(status_code=404, detail="Task not found")
+        
+    db_task.completed = update.completed
+    db.commit()
+    db.refresh(db_task)
+    return {"id": db_task.id, "completed": db_task.completed}

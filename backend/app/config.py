@@ -11,6 +11,17 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite:///./pde.db"
     SECRET_KEY: str = "default-insecure-key-for-local-dev-only"
     ENVIRONMENT: str = "development"
+    FRONTEND_URL: str = "http://localhost:3000"
+    LOG_RESET_TOKENS_IN_DEV: bool = False
+    
+    # Calendar Integration
+    ENCRYPTION_KEY: str = "your-32-byte-fernet-key-here-for-local-dev="
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
+
+    # Supabase (Optional)
+    SUPABASE_URL: str = ""
+
     FRONTEND_CORS_ORIGINS: Union[list[str], str] = [
         "http://localhost:3000",
         "https://personal-decision-engine.vercel.app",

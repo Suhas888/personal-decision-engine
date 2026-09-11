@@ -13,7 +13,12 @@ class ParseRequest(BaseModel):
 
 @router.post("/parse", response_model=ParsedInputResponse)
 def parse_input(request: ParseRequest, current_user: User = Depends(get_current_user)):
-    return parse_natural_language(request.text)
+    from ...utils.timer import ServerTimer
+    timer = ServerTimer("llm_parse_initial")
+    with timer.stage("llm_call"):
+        res = parse_natural_language(request.text)
+    timer.log_total()
+    return res
 
 @router.post("/save")
 def save_parsed_data(data: ParsedInputResponse, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):

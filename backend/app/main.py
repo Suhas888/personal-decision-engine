@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .database.core import engine, Base
-from .api.routes import health, profile, tasks, events, plan, llm, preferences, replan, commands, constraints, auth
+from .api.routes import health, profile, tasks, events, plan, llm, preferences, replan, commands, constraints, auth, calendar
 
 # Use Alembic for migrations instead of create_all
 # Base.metadata.create_all(bind=engine)
@@ -48,4 +48,4 @@ app.include_router(replan.router, prefix="/api/replan", tags=["Replan"])
 app.include_router(commands.router, prefix="/api/commands", tags=["Commands"])
 app.include_router(constraints.router, prefix="/api/constraints", tags=["Constraints"])
 app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
-
+app.include_router(calendar.router, prefix="/api/calendar", tags=["Calendar"])

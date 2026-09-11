@@ -28,6 +28,16 @@ class RefreshSession(Base):
     created_at = Column(DateTime(timezone=True), default=get_utc_now)
 
 
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    token_hash = Column(String, unique=True, index=True, nullable=False)
+    expires_at = Column(DateTime(timezone=True), index=True, nullable=False)
+    used = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), default=get_utc_now)
+
+
 class UserProfile(Base):
     __tablename__ = "user_profiles"
     id = Column(Integer, primary_key=True, index=True)
@@ -156,3 +166,48 @@ class CommandConfirmation(Base):
     expires_at = Column(DateTime(timezone=True), nullable=False)
     consumed = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), default=get_utc_now)
+
+
+class ConnectedAccount(Base):
+    __tablename__ = "connected_accounts"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    provider = Column(String, nullable=False)  # "google"
+    provider_account_id = Column(String, nullable=False)  # Google email
+    access_token_encrypted = Column(String, nullable=False)
+    refresh_token_encrypted = Column(String, nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    sync_token = Column(String, nullable=True)  # For incremental syncs
+    last_sync_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=get_utc_now)
+    updated_at = Column(DateTime(timezone=True), default=get_utc_now, onupdate=get_utc_now)
+
+    events = relationship("CalendarEvent", cascade="all, delete-orphan", passive_deletes=True, backref="account")
+    
+    __table_args__ = (
+        UniqueConstraint("user_id", "provider", name="uq_user_provider"),
+    )
+
+
+class CalendarEvent(Base):
+    __tablename__ = "calendar_events"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    account_id = Column(Integer, ForeignKey("connected_accounts.id", ondelete="CASCADE"), index=True, nullable=False)
+    
+    external_event_id = Column(String, index=True, nullable=False)
+    recurring_event_id = Column(String, index=True, nullable=True) # ID of the master recurring event if this is an instance
+    
+    title = Column(String, nullable=False)
+    start_time = Column(DateTime(timezone=True), nullable=False, index=True) # Absolute UTC start
+    end_time = Column(DateTime(timezone=True), nullable=False, index=True) # Absolute UTC end
+    all_day = Column(Boolean, default=False)
+    
+    status = Column(String, default="confirmed") # "confirmed" or "cancelled"
+    
+    created_at = Column(DateTime(timezone=True), default=get_utc_now)
+    updated_at = Column(DateTime(timezone=True), default=get_utc_now, onupdate=get_utc_now)
+    
+    __table_args__ = (
+        UniqueConstraint("account_id", "external_event_id", name="uq_account_external_event"),
+    )

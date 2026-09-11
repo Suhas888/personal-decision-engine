@@ -67,17 +67,39 @@ class TestTasksCRUD:
         ids = [t["id"] for t in list_res.json()]
         assert task_id not in ids
 
-    def test_complete_task(self, pg_client, pg_user_a):
+    def test_task_completion_lifecycle(self, pg_client, pg_user_a):
         create_res = pg_client.post("/api/tasks/", json={
             "title": "Finish me", "estimated_minutes": 30, "priority": 1
         }, headers=pg_user_a["headers"])
         task_id = create_res.json()["id"]
 
+        # 1. Incomplete -> Complete
         update_res = pg_client.put(f"/api/tasks/{task_id}", json={
             "title": "Finish me", "estimated_minutes": 30, "priority": 1, "completed": True
         }, headers=pg_user_a["headers"])
         assert update_res.status_code == 200
         assert update_res.json()["completed"] is True
+
+        # 2. Persists after reload
+        get_res = pg_client.get("/api/tasks/", headers=pg_user_a["headers"])
+        tasks = [t for t in get_res.json() if t["id"] == task_id]
+        assert tasks[0]["completed"] is True
+
+        # 3. Excluded from planning
+        plan_res = pg_client.post("/api/plan/generate", json={"week_start": "2026-09-07"}, headers=pg_user_a["headers"])
+        scheduled_task_ids = [b.get("task_id") for b in plan_res.json().get("scheduled_blocks", [])]
+        assert task_id not in scheduled_task_ids
+
+        # 4. Complete -> Incomplete
+        update_res2 = pg_client.put(f"/api/tasks/{task_id}", json={
+            "title": "Finish me", "estimated_minutes": 30, "priority": 1, "completed": False
+        }, headers=pg_user_a["headers"])
+        assert update_res2.json()["completed"] is False
+
+        # 5. Included in planning
+        plan_res2 = pg_client.post("/api/plan/generate", json={"week_start": "2026-09-07"}, headers=pg_user_a["headers"])
+        scheduled_task_ids2 = [b.get("task_id") for b in plan_res2.json().get("scheduled_blocks", [])]
+        assert task_id in scheduled_task_ids2
 
     def test_task_ownership_query_filter(self, pg_client, pg_user_a, pg_user_b):
         """Tasks listed for user A must not include user B's tasks."""

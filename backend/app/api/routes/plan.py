@@ -38,57 +38,77 @@ def get_plan(plan_id: int, db: Session = Depends(get_db), current_user: User = D
 
 @router.post("/generate", response_model=PlanResponse)
 def generate_plan(request: PlanRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    profile = db.query(UserProfile).filter(UserProfile.user_id == current_user.id).first()
-    if not profile:
-        profile = UserProfile(name=current_user.email.split("@")[0], user_id=current_user.id)
-        db.add(profile)
-        db.commit()
-        db.refresh(profile)
-
-    from ...models.core import TaskDependency
-    tasks = db.query(Task).filter(Task.user_id == current_user.id).all()
-    events = db.query(FixedEvent).filter(FixedEvent.user_id == current_user.id).all()
-    task_ids = [t.id for t in tasks]
-    dependencies = db.query(TaskDependency).filter(TaskDependency.task_id.in_(task_ids)).all()
-
-    # Fetch Dynamic Constraints
-    from ...models.core import DynamicConstraint
-    dynamic_constraints = db.query(DynamicConstraint).filter(
-        DynamicConstraint.user_id == profile.user_id,
-        DynamicConstraint.enabled == True
-    ).all()
-
-    # Generate Plan
-    plan_data = generate_weekly_plan(profile, tasks, events, dependencies, dynamic_constraints)
-    plan_data["week_start"] = request.week_start
+    from ...utils.timer import ServerTimer
+    timer = ServerTimer("calendar_plan")
     
-    from ...services.validation_service import validate_schedule
-    validate_schedule(plan_data, profile, events, tasks)
+    with timer.stage("db_fetch"):
+        profile = db.query(UserProfile).filter(UserProfile.user_id == current_user.id).first()
+        if not profile:
+            profile = UserProfile(name=current_user.email.split("@")[0], user_id=current_user.id)
+            db.add(profile)
+            db.commit()
+            db.refresh(profile)
+
+        from ...models.core import TaskDependency
+        tasks = db.query(Task).filter(Task.user_id == current_user.id).all()
+        
+        from ...utils.event_utils import get_planning_blocks
+        events = get_planning_blocks(db, current_user.id, profile.timezone)
+        
+        task_ids = [t.id for t in tasks]
+        dependencies = db.query(TaskDependency).filter(TaskDependency.task_id.in_(task_ids)).all()
+
+        # Fetch Dynamic Constraints
+        from ...models.core import DynamicConstraint
+        dynamic_constraints = db.query(DynamicConstraint).filter(
+            DynamicConstraint.user_id == profile.user_id,
+            DynamicConstraint.enabled == True
+        ).all()
+
+    with timer.stage("optimizer"):
+        # Generate Plan
+        plan_data = generate_weekly_plan(profile, tasks, events, dependencies, dynamic_constraints)
+        plan_data["week_start"] = request.week_start
+        
+        if "Unable to generate schedule." in plan_data.get("constraint_warnings", []):
+            timer.log_total()
+            raise HTTPException(
+                status_code=400,
+                detail="GENERIC_INFEASIBLE: Schedule is mathematically impossible. Please adjust deadlines, daily limits, or reduce task durations."
+            )
     
-    # Save the plan to the database
-    db_plan = Plan(
-        user_id=current_user.id,
-        week_start=request.week_start,
-        completion_percentage=plan_data.get("completion_percentage", 0.0),
-        objective_score=plan_data.get("objective_score", 0),
-        warnings=json.dumps(plan_data.get("constraint_warnings", []))
-    )
-    db.add(db_plan)
-    db.commit()
-    db.refresh(db_plan)
-    
-    # Save the scheduled blocks
-    for block in plan_data.get("scheduled_blocks", []):
-        db_block = ScheduleBlock(
+    with timer.stage("validate"):
+        from ...services.validation_service import validate_schedule
+        validate_schedule(plan_data, profile, events, tasks)
+        
+    with timer.stage("db_write"):
+        # Save the plan to the database
+        db_plan = Plan(
             user_id=current_user.id,
-            plan_id=db_plan.id,
-            date=block["date"],
-            start_time=block["start_time"],
-            end_time=block["end_time"],
-            task_id=block.get("task_id"),
-            block_type="task" if block.get("task_id") else "fixed"
+            week_start=request.week_start,
+            completion_percentage=plan_data.get("completion_percentage", 0.0),
+            objective_score=plan_data.get("objective_score", 0),
+            warnings=json.dumps(plan_data.get("constraint_warnings", []))
         )
-        db.add(db_block)
-    db.commit()
-
+        db.add(db_plan)
+        db.commit()
+        db.refresh(db_plan)
+        
+        # Save the scheduled blocks (optimized to use add_all)
+        db_blocks = []
+        for block in plan_data.get("scheduled_blocks", []):
+            db_blocks.append(ScheduleBlock(
+                user_id=current_user.id,
+                plan_id=db_plan.id,
+                date=block["date"],
+                start_time=block["start_time"],
+                end_time=block["end_time"],
+                task_id=block.get("task_id"),
+                block_type="task" if block.get("task_id") else "fixed"
+            ))
+        if db_blocks:
+            db.add_all(db_blocks)
+            db.commit()
+            
+    timer.log_total()
     return plan_data

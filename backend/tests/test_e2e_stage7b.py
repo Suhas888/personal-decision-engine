@@ -505,11 +505,9 @@ def test_e2e_12_invalid_command_rejected(db_session):
             "payload": {"hacked_field": "evil_value"},  # not in allowlist
         }
         exec_res = client.post("/api/commands/execute", json={"commands": [bad_cmd]})
-        # The executor will catch the bad field during execution
-        assert exec_res.status_code == 200
-        results = exec_res.json()["results"]
-        assert results[0]["success"] is False
-        assert "hacked_field" in results[0].get("error", "")
+        # FastAPI now rejects invalid fields at the endpoint with 422
+        assert exec_res.status_code == 422
+        assert "hacked_field" in str(exec_res.json()["detail"])
     finally:
         _restore_auth()
 
@@ -624,7 +622,7 @@ def test_e2e_17_deadline_preserved_through_update(db_session):
             payload={"priority": 1},
         )
         exec_res = client.post("/api/commands/execute", json={
-            "commands": [update_cmd.model_dump()]
+            "commands": [update_cmd.model_dump(exclude_unset=True)]
         })
         assert exec_res.status_code == 200
 
@@ -688,11 +686,17 @@ def test_e2e_19_multi_command_transaction_rollback(db_session):
             "operation": "UPDATE",
             "target_type": "TASK",
             "scope": "SINGLE",
-            "filters": [],
-            "payload": {"hacked_field": "bad"},  # will fail validation
+            "filters": [{"field": "TITLE", "operator": "EQ", "value": "Physics Notes"}],
+            "payload": {"title": None},
         }
 
-        exec_res = client.post("/api/commands/execute", json={"commands": [cmd1, cmd2]})
+        from unittest.mock import patch
+        from app.models.core import Task
+        
+        exec_res = None
+        with patch("app.services.command_executor.CommandExecutor._get_model", side_effect=[Task, ValueError("Simulated failure")]):
+            exec_res = client.post("/api/commands/execute", json={"commands": [cmd1, cmd2]})
+            
         assert exec_res.status_code == 200
         results = exec_res.json()["results"]
         # At least one failure reported

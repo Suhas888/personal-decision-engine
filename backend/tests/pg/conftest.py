@@ -30,12 +30,15 @@ from app.config import settings
 # ---------------------------------------------------------------------------
 
 TEST_SCHEMA = "pde_test"
-MIGRATION_REVISION = "935deb1afd0f"
+MIGRATION_REVISION = "b17804177650"
 BACKEND_DIR = Path(__file__).parent.parent.parent  # .../backend/
 
 # FK-safe truncation order (children before parents)
 _TRUNCATE_ORDER = [
+    "calendar_events",
+    "connected_accounts",
     "command_confirmations",
+    "password_reset_tokens",
     "dynamic_constraints",
     "plan_history",
     "schedule_blocks",

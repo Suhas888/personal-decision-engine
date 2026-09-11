@@ -9,6 +9,17 @@ export interface ScheduleBlock {
   explanation?: string;
 }
 
+export interface Task {
+  id: number;
+  title: string;
+  description: string;
+  estimated_minutes: number;
+  priority: number;
+  deadline?: string;
+  completed: boolean;
+  category?: string;
+}
+
 export interface PlanResponse {
   week_start: string;
   scheduled_blocks: ScheduleBlock[];

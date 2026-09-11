@@ -37,12 +37,12 @@ const INITIAL_CMD_STATE: CommandState = {
   errorMessage: '',
 };
 
-// ---- Props (unchanged from the existing contract) ----
 interface AIAssistantProps {
   llmInput: string;
   setLlmInput: (val: string) => void;
   handleLlmSubmit: () => void;
   llmLoading: boolean;
+  llmLoadingStep?: string | null;
   llmResponse: Record<string, unknown> | null;
   setLlmResponse: (val: Record<string, unknown> | null) => void;
   handleApproveAndSave: () => void;
@@ -50,23 +50,20 @@ interface AIAssistantProps {
   setReplanInput: (val: string) => void;
   handleReplanSubmit: () => void;
   replanLoading: boolean;
+  replanLoadingStep?: string | null;
   replanParsed: Record<string, unknown> | null;
   setReplanParsed: (val: Record<string, unknown> | null) => void;
   handleReplanApply: () => void;
   hasPlan: boolean;
-  /** Called after a command executes successfully so the parent can refresh data. */
   onCommandExecuted?: () => void;
 }
 
-// ---- Tab type ----
 type Tab = 'assistant' | 'command';
 
 export default function AIAssistant(props: AIAssistantProps) {
   const [activeTab, setActiveTab] = useState<Tab>('assistant');
   const [commandInput, setCommandInput] = useState('');
   const [cmdState, setCmdState] = useState<CommandState>(INITIAL_CMD_STATE);
-
-  // ---- Command pipeline handlers ----
 
   const handleCommandPreview = async () => {
     const text = commandInput.trim();
@@ -91,7 +88,6 @@ export default function AIAssistant(props: AIAssistantProps) {
     } catch (err) {
       if (err instanceof CommandApiError) {
         if (err.statusCode === 422) {
-          // Validation failure or clarification
           setCmdState({
             ...INITIAL_CMD_STATE,
             mode: 'clarification',
@@ -133,10 +129,8 @@ export default function AIAssistant(props: AIAssistantProps) {
     try {
       let results;
       if (cmdState.preview.requires_confirmation && cmdState.preview.confirmation_id) {
-        // Destructive: use the server-stored token — never re-send the commands
         results = await executeWithConfirmation(cmdState.preview.confirmation_id);
       } else {
-        // Safe: send the validated command list
         results = await executeCommands(cmdState.preview.commands);
       }
 
@@ -151,7 +145,6 @@ export default function AIAssistant(props: AIAssistantProps) {
         successMessage: total > 0 ? `Done: ${opLabel}.` : 'Command executed.',
       });
 
-      // Refresh parent data (plan, tasks, metrics)
       props.onCommandExecuted?.();
     } catch (err) {
       const msg =
@@ -169,27 +162,27 @@ export default function AIAssistant(props: AIAssistantProps) {
   const commandInputBusy = cmdState.mode === 'loading' || cmdState.mode === 'confirming';
 
   return (
-    <div className="flex flex-col h-full bg-neutral-900/60 rounded-3xl border border-white/10 shadow-2xl overflow-hidden backdrop-blur-xl">
+    <div className="flex flex-col h-full bg-surface rounded-2xl border border-subtle shadow-2xl overflow-hidden relative">
+      {/* Background flare effect */}
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[120%] h-32 bg-accent-brand/10 blur-[60px] pointer-events-none rounded-[100%]" />
+      
       {/* Header */}
-      <div className="p-5 border-b border-white/5 flex items-center gap-3">
-        <div className="p-2 bg-indigo-500/10 rounded-lg">
-          <Bot className="w-5 h-5 text-indigo-400" />
+      <div className="p-4 border-b border-subtle flex items-center gap-3 relative z-10">
+        <div className="p-2 bg-accent-brand/10 rounded-lg shrink-0">
+          <Sparkles className="w-4 h-4 text-accent-brand" />
         </div>
-        <div className="flex-1">
-          <h2 className="text-sm font-bold text-white tracking-wide">Assistant</h2>
-          <p className="text-[10px] text-neutral-500 uppercase tracking-widest font-semibold mt-0.5">
-            Decision Engine Core
-          </p>
+        <div className="flex-1 min-w-0">
+          <h2 className="text-sm font-bold text-white tracking-wide truncate">Command Center</h2>
         </div>
 
         {/* Tab switcher */}
-        <div className="flex gap-1 bg-black/40 rounded-xl p-1">
+        <div className="flex gap-1 bg-white/5 rounded-xl p-1 shrink-0">
           <button
             onClick={() => setActiveTab('assistant')}
             className={`px-3 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all ${
               activeTab === 'assistant'
-                ? 'bg-indigo-600 text-white'
-                : 'text-neutral-500 hover:text-neutral-300'
+                ? 'bg-accent-brand text-white'
+                : 'text-muted hover:text-white'
             }`}
           >
             Plan
@@ -198,28 +191,28 @@ export default function AIAssistant(props: AIAssistantProps) {
             onClick={() => setActiveTab('command')}
             className={`px-3 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all flex items-center gap-1 ${
               activeTab === 'command'
-                ? 'bg-indigo-600 text-white'
-                : 'text-neutral-500 hover:text-neutral-300'
+                ? 'bg-accent-brand text-white'
+                : 'text-muted hover:text-white'
             }`}
           >
             <Terminal className="w-2.5 h-2.5" />
-            Command
+            Terminal
           </button>
         </div>
       </div>
 
-      {/* ---- PLAN TAB (original behaviour, untouched) ---- */}
+      {/* ---- PLAN TAB ---- */}
       {activeTab === 'assistant' && (
         <>
-          <div className="flex-1 p-5 overflow-y-auto space-y-4 custom-scrollbar">
+          <div className="flex-1 p-5 overflow-y-auto space-y-4 custom-scrollbar relative z-10">
             <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
-              className="self-start w-fit max-w-[85%] bg-neutral-800 border border-neutral-700/50 rounded-2xl rounded-tl-sm p-4 text-sm text-neutral-300 shadow-sm"
+              className="bg-surface-hover border border-subtle rounded-xl p-4 text-sm text-primary shadow-sm"
             >
               {props.hasPlan
-                ? "Your week is planned! Need to adjust something? E.g., 'Move GATE to Tuesday' or 'Class was cancelled'."
-                : "Good morning! Let's build your week. What are your main goals?"}
+                ? "Your week is planned. Ready to adjust? Examples: 'Move GATE to Tuesday', 'Add a 1 hour workout today'."
+                : "Awaiting input. What are your main goals for this week?"}
             </motion.div>
 
             <AnimatePresence>
@@ -228,28 +221,28 @@ export default function AIAssistant(props: AIAssistantProps) {
                   initial={{ opacity: 0, scale: 0.95 }}
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.95 }}
-                  className="self-start w-full bg-indigo-950/30 border border-indigo-500/20 rounded-2xl rounded-tl-sm p-5 text-sm text-neutral-300 shadow-sm"
+                  className="bg-accent-brand/5 border border-accent-brand/20 rounded-xl p-5 text-sm text-primary shadow-sm w-full"
                 >
                   {props.llmResponse.clarification_needed ? (
-                    <div className="text-yellow-400/90 font-medium flex items-start gap-3">
-                      <Sparkles className="w-4 h-4 shrink-0 mt-0.5" />
+                    <div className="text-amber-400 font-medium flex items-start gap-3">
+                      <Bot className="w-4 h-4 shrink-0 mt-0.5 text-amber-500" />
                       <span className="leading-relaxed">{props.llmResponse.clarification_question as string}</span>
                     </div>
                   ) : (
                     <div>
-                      <div className="font-semibold text-indigo-300 mb-4 flex items-center gap-2">
+                      <div className="font-semibold text-accent-brand mb-4 flex items-center gap-2">
                         <Check className="w-4 h-4" />
-                        Structured Interpretation
+                        Parsed Interpretation
                       </div>
                       <ul className="space-y-2 mb-6">
                         {Array.isArray(props.llmResponse.tasks) &&
                           props.llmResponse.tasks.map((t: Record<string, unknown>, i: number) => (
                             <li
                               key={`t-${i}`}
-                              className="flex justify-between items-center bg-black/40 p-2.5 rounded-xl border border-white/5"
+                              className="flex justify-between items-center bg-surface p-3 rounded-xl border border-subtle"
                             >
-                              <span className="text-indigo-50 font-medium text-xs">{t.title as string}</span>
-                              <span className="text-[10px] text-indigo-300 font-mono bg-indigo-900/40 px-2 py-1 rounded-md">
+                              <span className="text-white font-medium text-xs">{t.title as string}</span>
+                              <span className="text-[10px] text-accent-brand font-mono bg-accent-brand/10 px-2 py-1 rounded-md">
                                 {t.estimated_minutes as number}m (P{t.priority as number})
                               </span>
                             </li>
@@ -258,13 +251,13 @@ export default function AIAssistant(props: AIAssistantProps) {
                       <div className="flex gap-2">
                         <button
                           onClick={props.handleApproveAndSave}
-                          className="flex-1 py-2.5 bg-indigo-500 hover:bg-indigo-600 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2"
+                          className="flex-1 py-2.5 bg-accent-brand hover:bg-accent-brand-hover text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2"
                         >
-                          Approve <ArrowRight className="w-3 h-3" />
+                          Approve & Save <ArrowRight className="w-3 h-3" />
                         </button>
                         <button
                           onClick={() => props.setLlmResponse(null)}
-                          className="p-2.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 rounded-xl transition-colors"
+                          className="p-2.5 bg-surface hover:bg-surface-hover border border-subtle text-muted rounded-xl transition-colors"
                         >
                           <X className="w-4 h-4" />
                         </button>
@@ -279,29 +272,31 @@ export default function AIAssistant(props: AIAssistantProps) {
                   initial={{ opacity: 0, scale: 0.95 }}
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.95 }}
-                  className="self-start w-full bg-amber-950/20 border border-amber-500/20 rounded-2xl rounded-tl-sm p-5 text-sm text-neutral-300 shadow-sm"
+                  className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-5 text-sm text-primary shadow-sm w-full"
                 >
                   {props.replanParsed.clarification_needed ? (
-                    <div className="text-amber-400/90 font-medium flex items-start gap-3">
-                      <Sparkles className="w-4 h-4 shrink-0 mt-0.5" />
+                    <div className="text-amber-400 font-medium flex items-start gap-3">
+                      <Bot className="w-4 h-4 shrink-0 mt-0.5 text-amber-500" />
                       <span className="leading-relaxed">{props.replanParsed.clarification_question as string}</span>
                     </div>
                   ) : (
                     <div>
                       <div className="font-semibold text-amber-400 mb-3 flex items-center gap-2">
                         <Check className="w-4 h-4" />
-                        Proposed Change
+                        Proposed Adjustment
                       </div>
-                      <div className="mb-5 text-neutral-200 bg-black/40 p-3.5 rounded-xl border border-white/5">
+                      <div className="mb-5 text-primary bg-surface p-3.5 rounded-xl border border-subtle">
                         <p className="font-medium text-xs leading-relaxed">
                           {props.replanParsed.human_readable_summary as string}
                         </p>
-                        <div className="text-[10px] text-amber-500/70 mt-3 font-mono uppercase tracking-wider flex items-center gap-2">
+                        <div className="text-[10px] text-amber-500 mt-3 font-mono uppercase tracking-wider flex items-center gap-2">
                           <span className="px-1.5 py-0.5 bg-amber-500/10 rounded">
                             {props.replanParsed.action as string}
                           </span>
                           <ArrowRight className="w-3 h-3" />
-                          {(props.replanParsed.target_name as string) || 'N/A'}
+                          <span className="truncate max-w-[150px]">
+                            {(props.replanParsed.target_name as string) || 'N/A'}
+                          </span>
                         </div>
                       </div>
                       <div className="flex gap-2">
@@ -309,11 +304,11 @@ export default function AIAssistant(props: AIAssistantProps) {
                           onClick={props.handleReplanApply}
                           className="flex-1 py-2.5 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-bold transition-all"
                         >
-                          Re-Optimize Schedule
+                          Apply & Re-Optimize
                         </button>
                         <button
                           onClick={() => props.setReplanParsed(null)}
-                          className="p-2.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 rounded-xl transition-colors"
+                          className="p-2.5 bg-surface hover:bg-surface-hover border border-subtle text-muted rounded-xl transition-colors"
                         >
                           <X className="w-4 h-4" />
                         </button>
@@ -326,7 +321,7 @@ export default function AIAssistant(props: AIAssistantProps) {
           </div>
 
           {/* Plan tab input */}
-          <div className="p-5 pt-2 border-t border-white/5 bg-neutral-900/50">
+          <div className="p-4 border-t border-subtle bg-surface z-10 shrink-0">
             <div className="relative">
               <input
                 type="text"
@@ -336,11 +331,15 @@ export default function AIAssistant(props: AIAssistantProps) {
                 }
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
-                    props.hasPlan ? props.handleReplanSubmit() : props.handleLlmSubmit();
+                    if (props.hasPlan) {
+                      props.handleReplanSubmit();
+                    } else {
+                      props.handleLlmSubmit();
+                    }
                   }
                 }}
-                placeholder={props.hasPlan ? 'Adjust schedule…' : 'Message assistant…'}
-                className="w-full bg-black/60 border border-white/10 rounded-2xl pl-4 pr-12 py-3.5 text-sm focus:outline-none focus:border-indigo-500/50 transition-all placeholder:text-neutral-600"
+                placeholder={props.hasPlan ? 'e.g. Move workout to 6pm...' : 'e.g. Add math homework, takes 2 hours...'}
+                className="w-full bg-black/40 border border-subtle rounded-xl pl-4 pr-12 py-3.5 text-sm focus:outline-none focus:border-accent-brand/50 transition-all placeholder:text-muted text-white shadow-inner"
                 disabled={props.llmLoading || props.replanLoading}
               />
               <button
@@ -350,29 +349,31 @@ export default function AIAssistant(props: AIAssistantProps) {
                   props.replanLoading ||
                   (!props.llmInput && !props.replanInput)
                 }
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-2.5 bg-indigo-600 hover:bg-indigo-500 rounded-xl text-white transition-all disabled:opacity-0"
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-accent-brand hover:bg-accent-brand-hover rounded-lg text-white transition-all disabled:opacity-0"
               >
                 {props.llmLoading || props.replanLoading ? (
-                  <svg
-                    className="animate-spin h-4 w-4"
-                    xmlns="http://www.w3.org/2000/svg"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                  >
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                    />
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                    />
-                  </svg>
+                  <div className="flex items-center gap-2 px-1">
+                    <svg
+                      className="animate-spin h-4 w-4"
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                    >
+                      <circle
+                        className="opacity-25"
+                        cx="12"
+                        cy="12"
+                        r="10"
+                        stroke="currentColor"
+                        strokeWidth="4"
+                      />
+                      <path
+                        className="opacity-75"
+                        fill="currentColor"
+                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                      />
+                    </svg>
+                  </div>
                 ) : (
                   <Send className="w-4 h-4" />
                 )}
@@ -382,30 +383,27 @@ export default function AIAssistant(props: AIAssistantProps) {
         </>
       )}
 
-      {/* ---- COMMAND TAB (Stage 7B-H) ---- */}
+      {/* ---- COMMAND TAB ---- */}
       {activeTab === 'command' && (
         <>
-          <div className="flex-1 p-5 overflow-y-auto space-y-4 custom-scrollbar">
-            {/* Intro message (only when idle / after dismiss) */}
+          <div className="flex-1 p-5 overflow-y-auto space-y-4 custom-scrollbar relative z-10">
             {cmdState.mode === 'idle' && (
               <motion.div
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="bg-neutral-800 border border-neutral-700/50 rounded-2xl rounded-tl-sm p-4 text-sm text-neutral-300"
+                className="bg-surface-hover border border-subtle rounded-xl p-4 text-sm text-primary shadow-sm"
               >
-                <p className="text-xs leading-relaxed">
-                  Type a natural-language command, e.g.
+                <p className="text-xs leading-relaxed font-medium">
+                  Execute direct system commands:
                 </p>
-                <ul className="mt-2 space-y-1 text-[11px] text-neutral-400 list-disc list-inside">
+                <ul className="mt-2 space-y-2 text-[11px] text-muted list-disc list-inside">
                   <li>Delete all completed tasks</li>
-                  <li>Delete all GATE tasks</li>
                   <li>Mark Homework 1 as completed</li>
-                  <li>Delete task "Math revision"</li>
+                  <li>Delete task &quot;Math revision&quot;</li>
                 </ul>
               </motion.div>
             )}
 
-            {/* Command preview / state display */}
             {cmdState.mode !== 'idle' && (
               <CommandPreview
                 mode={cmdState.mode}
@@ -419,8 +417,7 @@ export default function AIAssistant(props: AIAssistantProps) {
             )}
           </div>
 
-          {/* Command tab input */}
-          <div className="p-5 pt-2 border-t border-white/5 bg-neutral-900/50">
+          <div className="p-4 border-t border-subtle bg-surface z-10 shrink-0">
             <div className="relative">
               <input
                 type="text"
@@ -430,13 +427,13 @@ export default function AIAssistant(props: AIAssistantProps) {
                   if (e.key === 'Enter') handleCommandPreview();
                 }}
                 placeholder="e.g. Delete all completed tasks…"
-                className="w-full bg-black/60 border border-white/10 rounded-2xl pl-4 pr-12 py-3.5 text-sm focus:outline-none focus:border-indigo-500/50 transition-all placeholder:text-neutral-600"
+                className="w-full bg-black/40 border border-subtle rounded-xl pl-4 pr-12 py-3.5 text-sm focus:outline-none focus:border-accent-brand/50 transition-all placeholder:text-muted text-white font-mono shadow-inner"
                 disabled={commandInputBusy}
               />
               <button
                 onClick={handleCommandPreview}
                 disabled={commandInputBusy || !commandInput.trim()}
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-2.5 bg-indigo-600 hover:bg-indigo-500 rounded-xl text-white transition-all disabled:opacity-0"
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-accent-brand hover:bg-accent-brand-hover rounded-lg text-white transition-all disabled:opacity-0"
               >
                 {commandInputBusy ? (
                   <svg
@@ -460,13 +457,10 @@ export default function AIAssistant(props: AIAssistantProps) {
                     />
                   </svg>
                 ) : (
-                  <Send className="w-4 h-4" />
+                  <Terminal className="w-4 h-4" />
                 )}
               </button>
             </div>
-            <p className="text-[10px] text-neutral-600 mt-2 text-center">
-              Destructive operations require confirmation before execution.
-            </p>
           </div>
         </>
       )}

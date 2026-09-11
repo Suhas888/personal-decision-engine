@@ -48,6 +48,9 @@ class CommandExecutor:
         return None
 
     def _apply_filter(self, query, field_obj, operator: FilterOperator, value: Any):
+        if field_obj is Task.completed and isinstance(value, str):
+            value = value.lower() in ("true", "1", "t", "y", "yes")
+            
         if operator == FilterOperator.EQ:
             return query.filter(field_obj == value)
         elif operator == FilterOperator.CONTAINS:
@@ -101,15 +104,17 @@ class CommandExecutor:
                 elif cmd.operation == Operation.UPDATE:
                     if not cmd.payload:
                         raise ValueError("Payload required for UPDATE")
-                    self._validate_payload(cmd.target_type, cmd.payload)
-                    affected = query.update(cmd.payload)
+                    payload_dict = cmd.payload.model_dump(exclude_unset=True)
+                    self._validate_payload(cmd.target_type, payload_dict)
+                    affected = query.update(payload_dict)
                 elif cmd.operation == Operation.READ:
                     affected = query.count()
                 elif cmd.operation == Operation.CREATE:
                     if not cmd.payload:
                         raise ValueError("Payload required for CREATE")
-                    self._validate_payload(cmd.target_type, cmd.payload)
-                    new_obj = model(user_id=self.user_id, **cmd.payload)
+                    payload_dict = cmd.payload.model_dump(exclude_unset=True)
+                    self._validate_payload(cmd.target_type, payload_dict)
+                    new_obj = model(user_id=self.user_id, **payload_dict)
                     self.db.add(new_obj)
                     self.db.flush()
                     affected = 1

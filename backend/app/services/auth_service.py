@@ -63,3 +63,40 @@ def verify_token(token: str) -> dict:
         raise ValueError("Token has expired")
     except jwt.InvalidTokenError:
         raise ValueError("Invalid token")
+
+
+import secrets
+import hashlib
+from collections import defaultdict
+
+class RateLimiter:
+    def is_allowed(self, key: str, limit: int, window_seconds: int) -> bool:
+        raise NotImplementedError
+
+class InMemoryRateLimiter(RateLimiter):
+    def __init__(self):
+        self._store = defaultdict(list)
+    
+    def is_allowed(self, key: str, limit: int, window_seconds: int) -> bool:
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(seconds=window_seconds)
+        self._store[key] = [t for t in self._store[key] if t > cutoff]
+        
+        if len(self._store[key]) >= limit:
+            return False
+        
+        self._store[key].append(now)
+        return True
+
+# Singleton instance
+rate_limiter = InMemoryRateLimiter()
+
+def generate_reset_token() -> Tuple[str, str]:
+    """Generates a secure random token and its SHA-256 hash."""
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+    return raw_token, token_hash
+
+def hash_reset_token(token: str) -> str:
+    """Hashes a raw token using SHA-256."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()

@@ -33,7 +33,7 @@ export const authenticatedFetch = async (
         headers,
     };
 
-    let response = await fetch(url, config);
+    const response = await fetch(url, config);
 
     if (response.status === 401) {
         if (!isRefreshing) {
@@ -55,7 +55,7 @@ export const authenticatedFetch = async (
                         window.dispatchEvent(new Event("auth-logout"));
                     }
                 }
-            } catch (err) {
+            } catch {
                 setAccessToken(null);
                 onRefreshed(null);
                 if (typeof window !== "undefined") {

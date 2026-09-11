@@ -2,9 +2,10 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from app.database.core import Base
-from app.models.core import Task, FixedEvent, Preference
+from app.models.core import UserProfile, Task, FixedEvent, Preference
+from unittest.mock import patch
 from app.schemas.commands import Command, Operation, TargetType, Scope, FilterField, FilterOperator, CommandFilter
-from app.services.command_executor import CommandExecutor
+from app.services.command_executor import CommandExecutor, ExecutionResult
 
 @pytest.fixture(scope="function")
 def db_session():
@@ -88,16 +89,15 @@ def test_complete_all_tasks(db_session):
 
 def test_invalid_target_field(db_session):
     executor = CommandExecutor(db_session, "user1")
-    cmd = Command(
-        operation=Operation.UPDATE, 
-        target_type=TargetType.TASK, 
-        scope=Scope.ALL,
-        payload={"fake_field": True}
-    )
-    # The payload validation should fail
-    res = executor.execute([cmd])
-    assert not res[0].success
-    assert "fake_field" in res[0].error
+    import pytest
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError):
+        cmd = Command(
+            operation=Operation.UPDATE,
+            target_type=TargetType.TASK,
+            scope=Scope.ALL,
+            payload={"fake_field": True}
+        )
 
 def test_failed_transaction_rollback(db_session):
     setup_db(db_session)
@@ -111,16 +111,18 @@ def test_failed_transaction_rollback(db_session):
         filters=[CommandFilter(field=FilterField.TITLE, operator=FilterOperator.EQ, value="Task 1")]
     )
     cmd2 = Command(
-        operation=Operation.UPDATE, 
-        target_type=TargetType.TASK, 
+        operation=Operation.UPDATE,
+        target_type=TargetType.TASK,
         scope=Scope.SINGLE,
-        payload={"invalid_field": "test"} # this will raise an error during execution
+        filters=[CommandFilter(field=FilterField.TITLE, operator=FilterOperator.EQ, value="Task 1")],
+        payload={"title": "test"}
     )
     
-    res = executor.execute([cmd1, cmd2])
-    # The whole transaction should fail
-    assert len(res) == 1
-    assert not res[0].success
+    with patch.object(executor, '_get_model', side_effect=[Task, ValueError("Simulated failure")]):
+        res = executor.execute([cmd1, cmd2])
+        # The whole transaction should fail
+        assert len(res) == 1
+        assert not res[0].success
     
     # Verify rollback (Task 1 should still exist)
     assert db_session.query(Task).count() == 4

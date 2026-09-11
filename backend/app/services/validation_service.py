@@ -3,7 +3,9 @@ from fastapi import HTTPException
 from ..models.core import UserProfile, FixedEvent, Task
 from ..utils.time_utils import get_current_time, get_relative_day_offset
 
-def validate_schedule(plan_data: Dict[str, Any], profile: UserProfile, fixed_events: List[FixedEvent], tasks: List[Task]):
+from ..schemas.plan import PlanningBlock
+
+def validate_schedule(plan_data: Dict[str, Any], profile: UserProfile, fixed_events: List[PlanningBlock], tasks: List[Task]):
     blocks = plan_data.get("scheduled_blocks", [])
     
     # 1. Total minutes accounting validation

@@ -1,11 +1,16 @@
 from fastapi import APIRouter, Depends, HTTPException, Response, Request, status
 from sqlalchemy.orm import Session
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+import logging
+
+from app.config import settings
 from ...database.core import get_db
-from ...models.core import User, RefreshSession, UserProfile
-from ...schemas.auth import UserCreate, UserLogin, UserResponse, TokenResponse
-from ...services.auth_service import get_password_hash, verify_password, create_access_token, create_refresh_token, verify_token
+from ...models.core import User, RefreshSession, UserProfile, PasswordResetToken
+from ...schemas.auth import UserCreate, UserLogin, UserResponse, TokenResponse, ForgotPasswordRequest, ResetPasswordRequest, SuccessResponse
+from ...services.auth_service import get_password_hash, verify_password, create_access_token, create_refresh_token, verify_token, rate_limiter, generate_reset_token, hash_reset_token
 from ..dependencies import get_current_user
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -142,3 +147,83 @@ def logout(request: Request, response: Response, db: Session = Depends(get_db)):
 @router.get("/me", response_model=UserResponse)
 def read_users_me(current_user: User = Depends(get_current_user)):
     return current_user
+
+@router.post("/forgot-password", response_model=SuccessResponse)
+def forgot_password(request_data: ForgotPasswordRequest, request: Request, db: Session = Depends(get_db)):
+    # Rate Limiting
+    client_ip = request.client.host if request.client else "unknown"
+    rate_key = f"reset_{client_ip}_{request_data.email.lower()}"
+    if not rate_limiter.is_allowed(rate_key, limit=3, window_seconds=900): # 3 requests per 15 minutes
+        raise HTTPException(status_code=429, detail="Too many requests. Please try again later.")
+        
+    user = db.query(User).filter(User.email == request_data.email).first()
+    
+    # Always return success response for anti-enumeration
+    success_msg = "If that email exists, a reset link has been sent."
+    
+    if user:
+        # Invalidate any existing unused tokens for this user
+        db.query(PasswordResetToken).filter(
+            PasswordResetToken.user_id == user.id,
+            PasswordResetToken.used == False
+        ).update({"used": True})
+        
+        raw_token, token_hash = generate_reset_token()
+        
+        reset_token = PasswordResetToken(
+            user_id=user.id,
+            token_hash=token_hash,
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=15)
+        )
+        db.add(reset_token)
+        db.commit()
+        
+        # In a real system, send email here. 
+        # For now, we simulate and optionally log it.
+        reset_link = f"{settings.FRONTEND_URL}/reset-password?token={raw_token}"
+        if settings.LOG_RESET_TOKENS_IN_DEV:
+            logger.info(f"Password reset link generated for {user.email}: {reset_link}")
+            
+    return {"message": success_msg}
+
+@router.post("/reset-password", response_model=SuccessResponse)
+def reset_password(request_data: ResetPasswordRequest, db: Session = Depends(get_db)):
+    token_hash = hash_reset_token(request_data.token)
+    
+    # Needs to be transactional
+    try:
+        reset_token = db.query(PasswordResetToken).filter(
+            PasswordResetToken.token_hash == token_hash,
+            PasswordResetToken.used == False,
+            PasswordResetToken.expires_at > datetime.now(timezone.utc)
+        ).with_for_update().first() # Lock the row for update
+        
+        if not reset_token:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired token.")
+            
+        user = db.query(User).filter(User.id == reset_token.user_id).first()
+        if not user:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User no longer exists.")
+            
+        # Update password
+        user.hashed_password = get_password_hash(request_data.new_password)
+        
+        # Mark token as used
+        reset_token.used = True
+        
+        # Revoke all existing refresh sessions to force re-login everywhere
+        db.query(RefreshSession).filter(
+            RefreshSession.user_id == user.id,
+            RefreshSession.revoked == False
+        ).update({"revoked": True})
+        
+        db.commit()
+        return {"message": "Password has been successfully reset."}
+        
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error during password reset: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An error occurred during password reset.")

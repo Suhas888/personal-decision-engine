@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import Link from "next/link";
 import { AuroraBackground } from "./ui/AuroraBackground";
 import { ShinyText } from "./ui/ShinyText";
 
@@ -26,7 +27,7 @@ export default function AuthUI({ login, register, error, clearError }: AuthUIPro
       } else {
         await register(email, password);
       }
-    } catch (err) {
+    } catch {
       // Error is handled by the hook
     } finally {
       setIsSubmitting(false);
@@ -73,6 +74,13 @@ export default function AuthUI({ login, register, error, clearError }: AuthUIPro
                 placeholder="••••••••"
                 required
               />
+              {isLogin && (
+                <div className="mt-2 text-right">
+                  <Link href="/forgot-password" className="text-xs text-blue-400 hover:text-blue-300 hover:underline">
+                    Forgot password?
+                  </Link>
+                </div>
+              )}
             </div>
 
             {error && (

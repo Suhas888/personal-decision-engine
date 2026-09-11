@@ -100,11 +100,13 @@ def generate_weekly_plan(profile, tasks: List, fixed_events: List, dependencies:
         # Calculate Base Weight (Priority + Deadline + Starvation)
         base_weight = WEIGHTS["priority_base"] + (task.priority * WEIGHTS["priority_step"])
         
-        # Deadline Pressure
+        # Deadline Pressure and Hard Constraint
+        deadline_offset = None
         if task.deadline:
             try:
                 dt = datetime.datetime.strptime(task.deadline, "%Y-%m-%d").date()
                 days_until = (dt - today).days
+                deadline_offset = days_until * 24 * 60 + 1440 # End of the deadline day
                 if days_until < 7:
                     base_weight += max(0, (7 - days_until) * WEIGHTS["deadline_boost_per_day"])
             except ValueError:
@@ -140,18 +142,24 @@ def generate_weekly_plan(profile, tasks: List, fixed_events: List, dependencies:
         continuous = getattr(task, 'continuous_only', False)
         if continuous:
             num_blocks = 1
-            minutes_per_block = task.estimated_minutes
-            remainder = 0
+            block_durations = [task.estimated_minutes]
         else:
-            num_blocks = (task.estimated_minutes + profile.max_focus_block_minutes - 1) // profile.max_focus_block_minutes
-            if num_blocks == 0: num_blocks = 1
-            minutes_per_block = task.estimated_minutes // num_blocks
-            remainder = task.estimated_minutes % num_blocks
+            if task.estimated_minutes <= 0:
+                num_blocks = 1
+                block_durations = [0]
+            else:
+                num_full_blocks = task.estimated_minutes // profile.max_focus_block_minutes
+                remainder = task.estimated_minutes % profile.max_focus_block_minutes
+                block_durations = [profile.max_focus_block_minutes] * num_full_blocks
+                if remainder > 0:
+                    block_durations.append(remainder)
+                if not block_durations:
+                    block_durations = [0]
+                num_blocks = len(block_durations)
             
         task_blocks = []
         for b in range(num_blocks):
-            # Assign remainder to the last block
-            current_block_minutes = minutes_per_block + (remainder if b == num_blocks - 1 else 0)
+            current_block_minutes = block_durations[b]
             
             is_scheduled = model.NewBoolVar(f"task_{task.id}_b{b}_sched")
             start_var = model.NewIntVarFromDomain(task_domain, f"task_{task.id}_b{b}_start")
@@ -162,6 +170,10 @@ def generate_weekly_plan(profile, tasks: List, fixed_events: List, dependencies:
             model.Add(dur_var == 0).OnlyEnforceIf(is_scheduled.Not())
             
             interval_var = model.NewOptionalIntervalVar(start_var, dur_var, end_var, is_scheduled, f"task_{task.id}_b{b}_int")
+            
+            # Enforce hard deadline if applicable
+            if deadline_offset is not None:
+                model.Add(end_var <= deadline_offset).OnlyEnforceIf(is_scheduled)
             
             # Energy Match Objective
             is_energy_matched = model.NewBoolVar(f"task_{task.id}_b{b}_energy_match")
@@ -191,9 +203,12 @@ def generate_weekly_plan(profile, tasks: List, fixed_events: List, dependencies:
                 model.AddBoolAnd([is_scheduled, is_on_day]).OnlyEnforceIf(is_sched_on_day)
                 model.AddBoolOr([is_scheduled.Not(), is_on_day.Not()]).OnlyEnforceIf(is_sched_on_day.Not())
                 
+                # Prevent day-boundary bleed
+                model.Add(end_var <= day_offset + 1440).OnlyEnforceIf(is_sched_on_day)
+                
                 # Balance contribution
-                day_dur = model.NewIntVar(0, minutes_per_block, f"task_{task.id}_b{b}_day_{day}_dur")
-                model.Add(day_dur == minutes_per_block).OnlyEnforceIf(is_sched_on_day)
+                day_dur = model.NewIntVar(0, current_block_minutes, f"task_{task.id}_b{b}_day_{day}_dur")
+                model.Add(day_dur == current_block_minutes).OnlyEnforceIf(is_sched_on_day)
                 model.Add(day_dur == 0).OnlyEnforceIf(is_sched_on_day.Not())
                 daily_minutes_vars[day].append(day_dur)
                 
@@ -315,8 +330,12 @@ def generate_weekly_plan(profile, tasks: List, fixed_events: List, dependencies:
 
     # 11. Solve
     solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = 10.0 # Increased for multi-objective
+    solver.parameters.max_time_in_seconds = 2.0 # Strict bound for responsive UX
     status = solver.Solve(model)
+
+    import logging
+    logger = logging.getLogger("pde.optimizer")
+    logger.info(f"OR-Tools solver finished with status: {solver.StatusName(status)}, objective: {solver.ObjectiveValue() if status in (cp_model.OPTIMAL, cp_model.FEASIBLE) else 'N/A'}")
 
     # 12. Extract Results & Generate Explanations
     total_scheduled = 0
@@ -347,15 +366,21 @@ def generate_weekly_plan(profile, tasks: List, fixed_events: List, dependencies:
                     if solver.Value(is_energy):
                         reasons.append(f"Matched {getattr(task, 'energy_requirement', 'any')} energy.")
                         
+                    start_time_day = start_val % 1440
+                    end_time_day = end_val % 1440
+                    if end_time_day == 0 and duration > 0:
+                        end_time_day = 1440
+                        
                     scheduled_blocks.append({
                         "task_id": task.id,
                         "task_title": task.title,
                         "date": actual_date.strftime("%Y-%m-%d"),
                         "day": actual_date.strftime("%A"),
-                        "start_time": start_val % (24 * 60),
-                        "end_time": end_val % (24 * 60),
+                        "start_time": start_time_day,
+                        "end_time": end_time_day,
                         "duration_minutes": duration,
-                        "explanation": " ".join(reasons) or "Scheduled to balance workload."
+                        "explanation": " ".join(reasons) or "Scheduled to balance workload.",
+                        "deadline": task.deadline
                     })
                     total_scheduled += duration
                     
@@ -371,6 +396,12 @@ def generate_weekly_plan(profile, tasks: List, fixed_events: List, dependencies:
     warnings = []
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         warnings.append("Unable to generate schedule.")
+        # All pending tasks are unscheduled
+        for task in tasks:
+            if not task.completed:
+                unscheduled_tasks.append({"task_id": task.id, "title": task.title})
+    elif status == cp_model.FEASIBLE:
+        warnings.append("Schedule generated but may not be fully optimized due to time limit.")
         
     return {
         "scheduled_blocks": sorted_blocks,
@@ -384,6 +415,18 @@ def generate_weekly_plan(profile, tasks: List, fixed_events: List, dependencies:
 
 def _validate_schedule(blocks, dynamic_constraints, today_dt, user_tz):
     """Post-schedule validation to ensure mathematical constraints were honored."""
+    for b in blocks:
+        if b["start_time"] >= b["end_time"]:
+            raise ValueError(f"Invalid duration for {b['task_title']}: start {b['start_time']} >= end {b['end_time']}")
+        if b["end_time"] - b["start_time"] != b["duration_minutes"]:
+            raise ValueError(f"Duration mismatch for {b['task_title']}")
+        if b["deadline"]:
+            from datetime import datetime
+            deadline_dt = datetime.strptime(b["deadline"], "%Y-%m-%d").date()
+            block_dt = datetime.strptime(b["date"], "%Y-%m-%d").date()
+            if block_dt > deadline_dt:
+                raise ValueError(f"Task {b['task_title']} scheduled after deadline")
+
     # Validate no overlaps
     for i in range(len(blocks) - 1):
         b1 = blocks[i]

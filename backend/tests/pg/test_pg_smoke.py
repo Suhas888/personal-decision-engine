@@ -18,10 +18,10 @@ def test_pg_engine_targets_pde_test(pg_engine):
 
 
 def test_alembic_version_in_pde_test(pg_engine):
-    """alembic_version table must exist in pde_test with revision 935deb1afd0f."""
+    """alembic_version table must exist in pde_test with revision b17804177650."""
     with pg_engine.connect() as conn:
         version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-    assert version == "935deb1afd0f", f"version={version!r}"
+    assert version == "b17804177650", f"version={version!r}"
 
 
 def test_all_12_app_tables_exist(pg_engine):

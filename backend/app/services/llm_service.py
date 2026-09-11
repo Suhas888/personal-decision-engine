@@ -52,14 +52,25 @@ class ParsedChangeRequest(BaseModel):
     clarification_question: Optional[str] = None
 
 def _call_gemini_with_retry(prompt: str, schema_class):
-    client = genai.Client(api_key=settings.GEMINI_API_KEY)
+    # Enforce an explicit HTTP timeout at the client level to prevent SDK from hanging
+    client = genai.Client(
+        api_key=settings.GEMINI_API_KEY,
+        http_options={"timeout": 15000} # 15 seconds per call
+    )
     
-    max_retries = 2        # fail fast — don't hang the user for minutes
-    base_delay = 2         # short initial delay
-    max_wait_limit = 10    # give up immediately if API demands >10s wait
+    total_budget_seconds = 15.0
+    start_time = time.time()
+    
+    max_retries = 3        # up to 3 attempts if within budget
+    base_delay = 1.0       # start with a very short delay
     
     for attempt in range(max_retries):
         try:
+            # Re-check budget before each call
+            time_elapsed = time.time() - start_time
+            if time_elapsed >= total_budget_seconds:
+                raise HTTPException(status_code=503, detail="Gemini operation timed out. Please try again later.")
+                
             response = client.models.generate_content(
                 model=settings.GEMINI_MODEL,
                 contents=prompt,
@@ -72,11 +83,14 @@ def _call_gemini_with_retry(prompt: str, schema_class):
         except Exception as e:
             error_str = str(e)
             
-            # Detect 429 vs 503
+            # Do not log the prompt or response. Just log the error safely.
+            print(f"[Gemini API Error] Attempt {attempt+1} failed: {error_str[:150]}...")
+            
             is_429 = "429" in error_str or "RESOURCE_EXHAUSTED" in error_str
             is_503 = "503" in error_str or "UNAVAILABLE" in error_str
+            is_504 = "504" in error_str or "DEADLINE_EXCEEDED" in error_str
             
-            if is_429 or is_503:
+            if is_429 or is_503 or is_504:
                 # Check for daily quota exhaustion
                 if "GenerateRequestsPerDay" in error_str or ("quotaId" in error_str and "PerDay" in error_str):
                     raise HTTPException(
@@ -85,32 +99,33 @@ def _call_gemini_with_retry(prompt: str, schema_class):
                     )
                 
                 if attempt < max_retries - 1:
-                    # Check for explicit retryDelay
                     sleep_time = None
                     retry_match = re.search(r"'retryDelay': '(\d+)s'", error_str)
                     if retry_match:
                         sleep_time = int(retry_match.group(1))
                     
                     if not sleep_time:
-                        sleep_time = base_delay * (2 ** attempt) + random.uniform(0, 1)
+                        sleep_time = base_delay * (2 ** attempt) + random.uniform(0.1, 0.5)
                     
-                    # If the API demands a wait time greater than our request threshold, fail immediately with advice
-                    if sleep_time > max_wait_limit:
-                        raise HTTPException(
-                            status_code=429, 
-                            detail=f"Gemini is temporarily rate-limited. Please try again in about {sleep_time} seconds."
-                        )
+                    # If waiting would exceed our total budget, fail immediately
+                    if (time.time() - start_time + sleep_time) > total_budget_seconds:
+                        if is_429:
+                            raise HTTPException(
+                                status_code=429, 
+                                detail=f"Gemini is temporarily rate-limited. Please try again in about {int(sleep_time)} seconds."
+                            )
+                        else:
+                            raise HTTPException(status_code=503, detail="Gemini is temporarily busy. Please try again in a moment.")
                         
                     time.sleep(sleep_time)
                     continue
                 
+                # Retries exhausted
                 if is_429:
                     raise HTTPException(status_code=429, detail="Gemini is temporarily rate-limited. Please try again in about 60 seconds.")
                 else:
                     raise HTTPException(status_code=503, detail="Gemini is temporarily busy. Please try again in a moment.")
             
-            import traceback
-            traceback.print_exc()
             raise HTTPException(status_code=500, detail="An internal error occurred while connecting to the AI service.")
 
 

@@ -79,8 +79,8 @@ export function useAuth() {
       } else {
         throw new Error("Failed to load user profile.");
       }
-    } catch (err: any) {
-      setError(err.message || "An error occurred during login.");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "An error occurred during login.");
       throw err;
     }
   };
@@ -102,8 +102,8 @@ export function useAuth() {
 
       // Auto-login after registration
       await login(email, password);
-    } catch (err: any) {
-      setError(err.message || "An error occurred during registration.");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "An error occurred during registration.");
       throw err;
     }
   };
@@ -114,7 +114,7 @@ export function useAuth() {
         method: "POST",
         credentials: "include",
       });
-    } catch (err) {
+    } catch {
       // Ignore network errors on logout
     } finally {
       setUser(null);

@@ -21,6 +21,15 @@ class FixedEvent(FixedEventBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class PlanningBlock(BaseModel):
+    id: str
+    title: str
+    start_time: int  # minutes from midnight on the target day
+    end_time: int    # minutes from midnight on the target day
+    day_of_week: str
+    is_calendar_event: bool = False
+
+
 class ScheduleBlock(BaseModel):
     task_id: Optional[int] = None
     task_title: Optional[str] = None
